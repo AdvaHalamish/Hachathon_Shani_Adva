@@ -1,61 +1,62 @@
-תיעוד למערכת SpeedTest
-תיאור כללי
-המערכת מורכבת משרת (Server) ולקוח (Client) המאפשרים לבצע בדיקות מהירות של חיבורי רשת באמצעות פרוטוקולי TCP ו-UDP.
-הלקוח מתחבר לשרת, שולח בקשות לבדיקות מהירות ומודד את קצב העברת הנתונים.
-השרת מגיב לבקשות הלקוח, מבצע את ההעברות, ומשתף נתונים אודות ההעברה.
+General Description
+The system consists of a Server and a Client that allow network speed tests using the TCP and UDP protocols.
+The client connects to the server, sends requests for speed tests, and measures the data transfer rate.
+The server responds to client requests, performs the transfers, and shares information about the transfer.
 
-מבנה המערכת
+System Structure
 SpeedTestClient
-זוהי מחלקה שמייצגת לקוח המתחבר לשרת כדי לבצע בדיקות מהירות.
-תכונות עיקריות:
+This is a class representing the client that connects to the server to perform speed tests.
 
-MAGIC_COOKIE: מזהה ייחודי לתקשורת בין הלקוח לשרת.
-MSG_TYPE_OFFER, MSG_TYPE_REQUEST, MSG_TYPE_PAYLOAD: מזהים לסוגי הודעות המועברות בין הלקוח לשרת.
-פונקציות:
+Key Attributes:
 
-__init__()
-מאתחלת את הלקוח, מכינה את הסוקטים ומאזינה להצעות חיבור.
+MAGIC_COOKIE: A unique identifier for communication between the client and server.
+MSG_TYPE_OFFER, MSG_TYPE_REQUEST, MSG_TYPE_PAYLOAD: Identifiers for message types exchanged between the client and server.
+Functions:
 
-start()
-לולאה ראשית המאפשרת ללקוח להגדיר את פרטי הבדיקה ולחפש שרת מתאים.
+__init__():
+Initializes the client, prepares the sockets, and listens for connection offers.
 
-_get_positive_int(prompt: str)
-מבקשת מהמשתמש להכניס ערך שלם חיובי ומטפלת בטעויות קלט.
+start():
+The main loop allows the client to configure test details and search for a suitable server.
 
-_find_server()
-מחפשת שרת תקף המציע שירותי בדיקה באמצעות הודעת "הצעה" (MSG_TYPE_OFFER).
+_get_positive_int(prompt: str):
+Prompts the user to enter a positive integer and handles input errors.
 
-_tcp_test(test_id, size)
-מבצעת בדיקת מהירות TCP ומדווחת את הקצב שהושג.
+_find_server():
+Searches for a valid server offering test services using a "Offer" message (MSG_TYPE_OFFER).
 
-_udp_test(test_id, size)
-מבצעת בדיקת מהירות UDP, סופרת חבילות מוצלחות ומדווחת את הקצב ואחוז ההצלחה.
+_tcp_test(test_id, size):
+Performs a TCP speed test and reports the achieved rate.
+
+_udp_test(test_id, size):
+Performs a UDP speed test, counts successful packets, and reports the rate and success percentage.
 
 SpeedTestServer
-זוהי מחלקה שמייצגת שרת המספק שירותי בדיקות מהירות ללקוחות.
-תכונות עיקריות:
+This is a class representing the server that provides speed testing services to clients.
 
-MAGIC_COOKIE: מזהה ייחודי לתקשורת בין הלקוח לשרת.
-MSG_OFFER, MSG_REQUEST, MSG_TYPE_PAYLOAD: מזהים לסוגי הודעות.
-פונקציות:
+Key Attributes:
 
-__init__()
-מאתחלת את השרת, פותחת סוקטים TCP ו-UDP וממתינה לחיבורים.
+MAGIC_COOKIE: A unique identifier for communication between the client and server.
+MSG_OFFER, MSG_REQUEST, MSG_TYPE_PAYLOAD: Identifiers for message types.
+Functions:
 
-start()
-מפעילה שלושה תהליכים:
+__init__():
+Initializes the server, opens TCP and UDP sockets, and waits for connections.
 
-שידור הודעות Broadcast (_broadcast) ללקוחות.
-טיפול בחיבורים TCP (_handle_tcp).
-טיפול בבקשות UDP (_handle_udp).
-_broadcast()
-שולחת הודעות Broadcast כדי להודיע ללקוחות על זמינות השרת.
+start():
+Launches three processes:
 
-_handle_tcp()
-מאזינה לבקשות TCP של לקוחות ומעבירה נתונים בגודל שנדרש.
+Broadcasting messages (_broadcast) to notify clients of server availability.
+Handling TCP connections (_handle_tcp) to send requested data to clients.
+Handling UDP requests (_handle_udp) to send data packets to clients.
+_broadcast():
+Sends broadcast messages to notify clients of server availability.
 
-_handle_udp()
-מאזינה לבקשות UDP, מטפלת בהן, ושולחת נתונים בחבילות קטנות.
+_handle_tcp():
+Listens for TCP requests from clients and transfers the requested amount of data.
 
-_udp_transfer(addr, size)
-מבצעת את העברת הנתונים ב-UDP, כולל שליחה של חבילות נתונים עם מזהים ייחודיים.
+_handle_udp():
+Listens for UDP requests, processes them, and sends data in small packets.
+
+_udp_transfer(addr, size):
+Performs data transfer over UDP, including sending data packets with unique identifiers.
