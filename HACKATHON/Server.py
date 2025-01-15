@@ -98,9 +98,15 @@ class SpeedTestServer:
         sent = 0
         segment = 0
         total = (size + 1023) // 1024
+        transfer_start = time.time()
+        max_transfer_time = 10  # Timeout כולל של 10 שניות להעברה
 
         while sent < size and self.active:
             try:
+                if time.time() - transfer_start > max_transfer_time:
+                    print(f"UDP transfer timed out for {addr}")
+                    break
+
                 remaining = size - sent
                 chunk_size = min(1024, remaining)
                 chunk = random.randbytes(chunk_size)
