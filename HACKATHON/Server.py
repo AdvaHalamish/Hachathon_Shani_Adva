@@ -9,12 +9,19 @@ class SpeedTestServer:
     MAGIC_COOKIE = 0xabcddcba
     MSG_OFFER = 0x2
     MSG_REQUEST = 0x3
-    MSG_DATA = 0x3
     MSG_TYPE_PAYLOAD = 0x4
 
     def __init__(self):
         self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+        # Enable socket reuse
+        for sock in (self.udp_socket, self.tcp_socket):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        # Get IP address
+        hostname = socket.gethostname()
+        self.ip_address = socket.gethostbyname(hostname)
 
         self.udp_socket.bind(('', 0))
         self.tcp_socket.bind(('', 0))
@@ -24,7 +31,7 @@ class SpeedTestServer:
         self.tcp_port = self.tcp_socket.getsockname()[1]
         self.active = True
 
-        print(f"Server started on UDP port {self.udp_port}, TCP port {self.tcp_port}")
+        print(f"Server started, listening on IP address {self.ip_address}")
 
     def start(self):
         threads = [
@@ -32,6 +39,7 @@ class SpeedTestServer:
             threading.Thread(target=self._handle_tcp),
             threading.Thread(target=self._handle_udp)
         ]
+
         for t in threads:
             t.daemon = True
             t.start()
@@ -97,21 +105,18 @@ class SpeedTestServer:
                 chunk_size = min(1024, remaining)
                 chunk = random.randbytes(chunk_size)
 
-                time.sleep(0.0001)
-
                 header = struct.pack('!IbQQ',
                                      self.MAGIC_COOKIE,
                                      self.MSG_TYPE_PAYLOAD,
                                      total,
-                                     segment
-                                     )
+                                     segment)
 
                 packet = header + chunk
-                bytes_sent = self.udp_socket.sendto(packet, addr)
+                self.udp_socket.sendto(packet, addr)
 
-                if bytes_sent > 0:
-                    sent += chunk_size
-                    segment += 1
+                sent += chunk_size
+                segment += 1
+                time.sleep(0.0001)  # Small delay to prevent overwhelming the network
 
             except Exception as e:
                 print(f"UDP transfer error: {e}")
