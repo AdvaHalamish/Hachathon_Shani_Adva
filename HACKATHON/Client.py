@@ -3,15 +3,26 @@ import struct
 import threading
 import time
 from typing import Optional, Tuple
+from colorama import Fore, Style, init
+
+init(autoreset=True)
 
 
 class SpeedTestClient:
+    """
+    A client class for performing network speed tests using TCP and UDP protocols.
+    """
+
     MAGIC_COOKIE = 0xabcddcba
     MSG_TYPE_OFFER = 0x2
     MSG_TYPE_REQUEST = 0x3
     MSG_TYPE_PAYLOAD = 0x4
 
     def __init__(self):
+        """
+        Initializes the client, sets up sockets for communication, and prepares to listen for server offers.
+        """
+
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -19,18 +30,21 @@ class SpeedTestClient:
         self.server = None
         self.active = True
 
-        print("Client started, listening for offer requests...")
+        print(f"{Fore.CYAN}Client started, listening for offer requests...{Style.RESET_ALL}")
 
     def start(self):
+        """
+        Starts the main client loop, allowing the user to configure tests and execute them.
+        """
         while self.active:
             try:
-                size = self._get_positive_int("Enter size (bytes): ")
-                tcp_conns = self._get_positive_int("Enter TCP connections: ")
-                udp_conns = self._get_positive_int("Enter UDP connections: ")
+                size = self._get_positive_int(f"{Fore.GREEN}Enter size (bytes): {Style.RESET_ALL}")
+                tcp_conns = self._get_positive_int(f"{Fore.GREEN}Enter TCP connections: {Style.RESET_ALL}")
+                udp_conns = self._get_positive_int(f"{Fore.GREEN}Enter UDP connections: {Style.RESET_ALL}")
 
                 self._find_server()
                 if not self.server:
-                    print("No valid server found. Retrying...")
+                    print(f"{Fore.RED}No valid server found. Retrying...{Style.RESET_ALL}")
                     continue
 
                 threads = []
@@ -47,16 +61,26 @@ class SpeedTestClient:
                 for t in threads:
                     t.join()
 
-                print("All transfers complete, listening to offer requests")
+                print(f"{Fore.CYAN}All transfers complete, listening to offer requests{Style.RESET_ALL}")
 
             except KeyboardInterrupt:
                 self.active = False
-                print("Client shutting down...")
+                print(f"{Fore.YELLOW}Client shutting down...{Style.RESET_ALL}")
             except Exception as e:
-                print(f"Unexpected error: {e}")
+                print(f"{Fore.RED}Unexpected error: {e}{Style.RESET_ALL}")
                 time.sleep(1)
 
     def _get_positive_int(self, prompt: str) -> int:
+        """
+               Prompts the user to enter a positive integer.
+
+               Args:
+                   prompt (str): The prompt message to display to the user.
+
+               Returns:
+                   int: The positive integer entered by the user.
+        """
+
         while True:
             try:
                 value = int(input(prompt))
@@ -64,22 +88,32 @@ class SpeedTestClient:
                     raise ValueError("Value must be positive.")
                 return value
             except ValueError as e:
-                print(f"Invalid input: {e}")
+                print(f"{Fore.RED}Invalid input: {e}{Style.RESET_ALL}")
 
     def _find_server(self):
+        """
+                Searches for a server broadcasting a valid offer.
+        """
         try:
             data, addr = self.sock.recvfrom(1024)
             if len(data) >= 9:
                 magic, msg_type, udp_port, tcp_port = struct.unpack('!IbHH', data[:9])
                 if magic == self.MAGIC_COOKIE and msg_type == self.MSG_TYPE_OFFER:
                     self.server = (addr[0], udp_port, tcp_port)
-                    print(f"Received valid offer from {addr[0]}")
+                    print(f"{Fore.GREEN}Received valid offer from {addr[0]}{Style.RESET_ALL}")
                 else:
-                    print("Invalid offer packet received.")
+                    print(f"{Fore.RED}Invalid offer packet received.{Style.RESET_ALL}")
         except Exception as e:
-            print(f"Error while receiving server offer: {e}")
+            print(f"{Fore.RED}Error while receiving server offer: {e}{Style.RESET_ALL}")
 
     def _tcp_test(self, test_id, size):
+        """
+        Performs a TCP speed test with the server.
+
+        Args:
+            test_id (int): The ID of the test for logging purposes.
+            size (int): The size of data to transfer in bytes.
+        """
         start_time = time.time()
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -95,15 +129,22 @@ class SpeedTestClient:
 
             duration = time.time() - start_time
             speed = (received * 8) / duration
-            print(f"TCP transfer #{test_id} finished: {received} bytes in {duration:.2f} seconds, "
-                  f"speed: {speed:.1f} bits/second")
+            print(f"{Fore.BLUE}TCP transfer #{test_id} finished: {received} bytes in {duration:.2f} seconds, "
+                  f"speed: {speed:.1f} bits/second{Style.RESET_ALL}\n")
 
         except Exception as e:
-            print(f"TCP test error (test #{test_id}): {e}")
+            print(f"{Fore.RED}TCP test error (test #{test_id}): {e}{Style.RESET_ALL}")
         finally:
             sock.close()
 
     def _udp_test(self, test_id, size):
+        """
+               Performs a UDP speed test with the server.
+
+               Args:
+                   test_id (int): The ID of the test for logging purposes.
+                   size (int): The size of data to transfer in bytes.
+        """
         start_time = time.time()
         max_test_duration = 10.0
         try:
@@ -128,21 +169,24 @@ class SpeedTestClient:
                             bytes_received += len(payload)
                             total_packets = total
                 except socket.timeout:
-                    continue  # המשך לבדוק עד שזמן ה-Timeout הכולל יפוג
+                    continue
 
             duration = time.time() - start_time
             speed = (bytes_received * 8) / duration if duration > 0 else 0
             success_rate = (len(segments) / total_packets * 100) if total_packets else 0
 
-            print(f"UDP transfer #{test_id} finished: {bytes_received} bytes in {duration:.2f} seconds, "
-                  f"speed: {speed:.1f} bits/second, success rate: {success_rate:.1f}%\n")
+            print(f"{Fore.MAGENTA}UDP transfer #{test_id} finished: {bytes_received} bytes in {duration:.2f} seconds, "
+                  f"speed: {speed:.1f} bits/second, success rate: {success_rate:.1f}%{Style.RESET_ALL}\n")
 
         except Exception as e:
-            print(f"UDP test error (test #{test_id}): {e}")
+            print(f"{Fore.RED}UDP test error (test #{test_id}): {e}{Style.RESET_ALL}")
         finally:
             sock.close()
 
 
 if __name__ == "__main__":
+    """
+    Main entry point for the client. Initializes and starts the SpeedTestClient.
+    """
     client = SpeedTestClient()
     client.start()
