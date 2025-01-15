@@ -2,18 +2,7 @@ import socket
 import struct
 import threading
 import time
-from dataclasses import dataclass
-
-
-@dataclass
-class Stats:
-    id: int
-    protocol: str
-    start: float
-    end: float = 0
-    bytes: int = 0
-    packets: int = 0
-    total_packets: int = 0
+from typing import Optional, Tuple
 
 
 class SpeedTestClient:
@@ -29,70 +18,83 @@ class SpeedTestClient:
         self.server = None
         self.active = True
 
-    def start(self):
-        print("Client started, waiting for server...")
+        print("Client started, listening for offer requests...")
 
+    def start(self):
         while self.active:
             try:
+                # Get user input
                 size = int(input("Enter size (bytes): "))
-                tcp = int(input("Enter TCP connections: "))
-                udp = int(input("Enter UDP connections: "))
+                tcp_conns = int(input("Enter TCP connections: "))
+                udp_conns = int(input("Enter UDP connections: "))
 
+                # Find server
                 self._find_server()
                 if not self.server:
                     continue
 
+                # Start all transfers in parallel
                 threads = []
-                for i in range(tcp):
+                for i in range(tcp_conns):
                     t = threading.Thread(target=self._tcp_test, args=(i + 1, size))
                     threads.append(t)
                     t.start()
 
-                for i in range(udp):
-                    t = threading.Thread(target=self._udp_test, args=(tcp + i + 1, size))
+                for i in range(udp_conns):
+                    t = threading.Thread(target=self._udp_test,
+                                         args=(tcp_conns + i + 1, size))
                     threads.append(t)
                     t.start()
 
+                # Wait for all transfers to complete
                 for t in threads:
                     t.join()
 
+                print("All transfers complete, listening to offer requests")
+
             except KeyboardInterrupt:
                 break
-            except:
+            except Exception as e:
+                print(f"Error: {e}")
                 time.sleep(1)
 
     def _find_server(self):
-        print("Looking for server...")
         try:
             data, addr = self.sock.recvfrom(1024)
             if len(data) >= 9:
                 magic, msg_type, udp_port, tcp_port = struct.unpack('!IbHH', data[:9])
                 if magic == self.MAGIC_COOKIE and msg_type == self.MSG_TYPE_OFFER:
                     self.server = (addr[0], udp_port, tcp_port)
-                    print(f"Found server at {addr[0]}")
+                    print(f"Received offer from {addr[0]}")
         except:
             pass
 
     def _tcp_test(self, test_id, size):
-        stats = Stats(test_id, "TCP", time.time())
+        start_time = time.time()
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.connect((self.server[0], self.server[2]))
             sock.send(f"{size}\n".encode())
 
-            while stats.bytes < size:
+            received = 0
+            while received < size:
                 data = sock.recv(8192)
                 if not data:
                     break
-                stats.bytes += len(data)
+                received += len(data)
 
+            duration = time.time() - start_time
+            speed = (received * 8) / duration
+            print(f"TCP transfer #{test_id} finished, total time: {duration:.2f} seconds, "
+                  f"total speed: {speed:.1f} bits/second\n")
+
+        except Exception as e:
+            print(f"TCP test error: {e}")
         finally:
             sock.close()
-            stats.end = time.time()
-            self._print_stats(stats)
 
     def _udp_test(self, test_id, size):
-        stats = Stats(test_id, "UDP", time.time())
+        start_time = time.time()
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.settimeout(1.0)
@@ -102,6 +104,8 @@ class SpeedTestClient:
 
             segments = set()
             last_recv = time.time()
+            bytes_received = 0
+            total_packets = 0
 
             while True:
                 try:
@@ -114,37 +118,28 @@ class SpeedTestClient:
                         if (magic == self.MAGIC_COOKIE and
                                 msg_type == self.MSG_TYPE_PAYLOAD and
                                 seg not in segments):
-
                             payload = data[21:]
                             segments.add(seg)
-                            stats.bytes += len(payload)
-                            stats.packets += 1
-                            stats.total_packets = total
-
-                            if stats.packets % 100 == 0:
-                                print(f"UDP #{stats.id}: received {stats.packets}/{total} packets")
+                            bytes_received += len(payload)
+                            total_packets = total
 
                 except socket.timeout:
-                    if time.time() - last_recv > 2.0:
+                    if time.time() - last_recv > 1.0:  # No data for 1 second
                         break
                     continue
+
+            duration = time.time() - start_time
+            speed = (bytes_received * 8) / duration
+            success_rate = (len(segments) / total_packets * 100) if total_packets else 0
+
+            print(f"UDP transfer #{test_id} finished, total time: {duration:.2f} seconds, "
+                  f"total speed: {speed:.1f} bits/second,\n "
+                  f"percentage of packets received successfully: {success_rate:.1f}%")
 
         except Exception as e:
             print(f"UDP test error: {e}")
         finally:
             sock.close()
-            stats.end = time.time()
-            self._print_stats(stats)
-
-    def _print_stats(self, stats):
-        duration = stats.end - stats.start
-        speed = (stats.bytes * 8) / duration
-
-        if stats.protocol == "TCP":
-            print(f"TCP #{stats.id}: {duration:.2f}s, {speed:.1f} bits/s")
-        else:
-            success = (stats.packets / stats.total_packets * 100) if stats.total_packets else 0
-            print(f"UDP #{stats.id}: {duration:.2f}s, {speed:.1f} bits/s, {success:.1f}% packets")
 
 
 if __name__ == "__main__":
