@@ -1,100 +1,152 @@
 import socket
+import struct
 import threading
 import time
-import struct
-class Client:
-    def __init__(self, file_size, tcp_connections, udp_connections, udp_port=13117):
-        self.file_size = file_size
-        self.tcp_connections = tcp_connections
-        self.udp_connections = udp_connections
-        self.udp_port = udp_port
+from dataclasses import dataclass
 
-    def listen_for_offers(self):
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
-            udp_socket.bind(('', self.udp_port))
-            print("Listening for server offers...")
 
-            while True:
-                data, server_address = udp_socket.recvfrom(1024)
-                try:
-                    unpacked_data = struct.unpack('!IBHH', data)
-                    if unpacked_data[0] == 0xabcddcba and unpacked_data[1] == 0x2:
-                        print(f"Received offer from {server_address[0]}")
-                        return server_address[0], unpacked_data[2], unpacked_data[3]
-                except Exception as e:
-                    print(f"Offer Error: {e}")
+@dataclass
+class Stats:
+    id: int
+    protocol: str
+    start: float
+    end: float = 0
+    bytes: int = 0
+    packets: int = 0
+    total_packets: int = 0
 
-    def tcp_transfer(self, server_ip, server_tcp_port, connection_id):
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp_socket:
-                tcp_socket.connect((server_ip, server_tcp_port))
-                tcp_socket.sendall(f"{self.file_size}\n".encode())
 
-                start_time = time.time()
-                received = 0
-                while received < self.file_size:
-                    chunk = tcp_socket.recv(1024)
-                    if not chunk:
-                        break
-                    received += len(chunk)
+class SpeedTestClient:
+    MAGIC_COOKIE = 0xabcddcba
+    MSG_TYPE_OFFER = 0x2
+    MSG_TYPE_REQUEST = 0x3
+    MSG_TYPE_PAYLOAD = 0x4
 
-                elapsed_time = time.time() - start_time
-                speed = received / elapsed_time if elapsed_time > 0 else 0
-                print(f"TCP transfer #{connection_id} finished, total time: {elapsed_time:.2f} seconds, speed: {speed:.2f} bytes/second")
-        except Exception as e:
-            print(f"TCP transfer #{connection_id} error: {e}")
-
-    def udp_transfer(self, server_ip, server_udp_port, connection_id):
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
-                udp_socket.settimeout(1)
-
-                request = struct.pack('!IBQ', 0xabcddcba, 0x3, self.file_size)
-                udp_socket.sendto(request, (server_ip, server_udp_port))
-
-                start_time = time.time()
-                received_bytes = 0
-                while time.time() - start_time < 1:
-                    try:
-                        data, _ = udp_socket.recvfrom(1024)
-                        received_bytes += len(data)
-                    except socket.timeout:
-                        break
-
-                elapsed_time = time.time() - start_time
-                speed = received_bytes / elapsed_time if elapsed_time > 0 else 0
-                print(
-                    f"UDP transfer #{connection_id} finished, total time: {elapsed_time:.2f} seconds, "
-                    f"speed: {speed:.2f} bytes/second"
-                )
-        except Exception as e:
-            print(f"UDP transfer #{connection_id} error: {e}")
+    def __init__(self):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        self.sock.bind(('', 13117))
+        self.server = None
+        self.active = True
 
     def start(self):
-        server_ip, server_udp_port, server_tcp_port = self.listen_for_offers()
+        print("Client started, waiting for server...")
 
-        threads = []
+        while self.active:
+            try:
+                size = int(input("Enter size (bytes): "))
+                tcp = int(input("Enter TCP connections: "))
+                udp = int(input("Enter UDP connections: "))
 
-        for i in range(self.tcp_connections):
-            t = threading.Thread(target=self.tcp_transfer, args=(server_ip, server_tcp_port, i + 1))
-            t.start()
-            threads.append(t)
+                self._find_server()
+                if not self.server:
+                    continue
 
-        for i in range(self.udp_connections):
-            t = threading.Thread(target=self.udp_transfer, args=(server_ip, server_udp_port, i + 1))
-            t.start()
-            threads.append(t)
+                threads = []
+                for i in range(tcp):
+                    t = threading.Thread(target=self._tcp_test, args=(i + 1, size))
+                    threads.append(t)
+                    t.start()
 
-        for t in threads:
-            t.join()
+                for i in range(udp):
+                    t = threading.Thread(target=self._udp_test, args=(tcp + i + 1, size))
+                    threads.append(t)
+                    t.start()
+
+                for t in threads:
+                    t.join()
+
+            except KeyboardInterrupt:
+                break
+            except:
+                time.sleep(1)
+
+    def _find_server(self):
+        print("Looking for server...")
+        try:
+            data, addr = self.sock.recvfrom(1024)
+            if len(data) >= 9:
+                magic, msg_type, udp_port, tcp_port = struct.unpack('!IbHH', data[:9])
+                if magic == self.MAGIC_COOKIE and msg_type == self.MSG_TYPE_OFFER:
+                    self.server = (addr[0], udp_port, tcp_port)
+                    print(f"Found server at {addr[0]}")
+        except:
+            pass
+
+    def _tcp_test(self, test_id, size):
+        stats = Stats(test_id, "TCP", time.time())
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((self.server[0], self.server[2]))
+            sock.send(f"{size}\n".encode())
+
+            while stats.bytes < size:
+                data = sock.recv(8192)
+                if not data:
+                    break
+                stats.bytes += len(data)
+
+        finally:
+            sock.close()
+            stats.end = time.time()
+            self._print_stats(stats)
+
+    def _udp_test(self, test_id, size):
+        stats = Stats(test_id, "UDP", time.time())
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(1.0)
+
+            request = struct.pack('!IbQ', self.MAGIC_COOKIE, self.MSG_TYPE_REQUEST, size)
+            sock.sendto(request, (self.server[0], self.server[1]))
+
+            segments = set()
+            last_recv = time.time()
+
+            while True:
+                try:
+                    data, _ = sock.recvfrom(2048)
+                    last_recv = time.time()
+
+                    if len(data) >= 21:
+                        magic, msg_type, total, seg = struct.unpack('!IbQQ', data[:21])
+
+                        if (magic == self.MAGIC_COOKIE and
+                                msg_type == self.MSG_TYPE_PAYLOAD and
+                                seg not in segments):
+
+                            payload = data[21:]
+                            segments.add(seg)
+                            stats.bytes += len(payload)
+                            stats.packets += 1
+                            stats.total_packets = total
+
+                            if stats.packets % 100 == 0:
+                                print(f"UDP #{stats.id}: received {stats.packets}/{total} packets")
+
+                except socket.timeout:
+                    if time.time() - last_recv > 2.0:
+                        break
+                    continue
+
+        except Exception as e:
+            print(f"UDP test error: {e}")
+        finally:
+            sock.close()
+            stats.end = time.time()
+            self._print_stats(stats)
+
+    def _print_stats(self, stats):
+        duration = stats.end - stats.start
+        speed = (stats.bytes * 8) / duration
+
+        if stats.protocol == "TCP":
+            print(f"TCP #{stats.id}: {duration:.2f}s, {speed:.1f} bits/s")
+        else:
+            success = (stats.packets / stats.total_packets * 100) if stats.total_packets else 0
+            print(f"UDP #{stats.id}: {duration:.2f}s, {speed:.1f} bits/s, {success:.1f}% packets")
+
 
 if __name__ == "__main__":
-    max_file_size = 2**64 - 1
-    file_size = int(input("Enter file size (in bytes): ").strip())
-    if file_size > max_file_size:
-        raise ValueError(f"File size must be at most {max_file_size} bytes (8 bytes).")
-
-    tcp_connections = int(input("Enter number of TCP connections: ").strip())
-    udp_connections = int(input("Enter number of UDP connections: ").strip())
-    client = Client(file_size, tcp_connections, udp_connections)
+    client = SpeedTestClient()
     client.start()
